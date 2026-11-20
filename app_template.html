@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Digit Recognizer</title>
+<style>
+:root{--bg:#fcfcfb;--card:#ffffff;--ink:#0b0b0b;--muted:#52514e;--grid:#e6e5e1;--blue:#2a78d6;--orange:#eb6834;--stroke:#0b0b0b}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121211;--card:#1b1b1a;--ink:#f2f1ee;--muted:#a3a29d;--grid:#33332f;--blue:#5b9bec;--orange:#f08a5d;--stroke:#f2f1ee}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.45}
+main{max-width:860px;margin:0 auto;padding:24px 16px 40px}
+h1{font-size:1.6rem;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 20px}
+.grid{display:grid;grid-template-columns:minmax(0,320px) minmax(0,1fr);gap:20px;align-items:start}
+@media (max-width:640px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--grid);border-radius:12px;padding:14px}
+canvas{display:block;width:100%;aspect-ratio:1/1;touch-action:none;background:var(--card);border-radius:8px;cursor:crosshair}
+.row{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-top:10px}
+button{font:inherit;border:1px solid var(--grid);background:var(--card);color:var(--ink);border-radius:8px;padding:8px 14px;cursor:pointer}
+button:hover{border-color:var(--blue)}
+.hint{color:var(--muted);font-size:.85rem}
+.big{display:flex;align-items:baseline;gap:12px;margin-bottom:10px}
+#digit{font-size:4rem;font-weight:700;line-height:1;min-width:1.2ch;color:var(--blue)}
+#msg{color:var(--muted)}
+.bars{display:grid;gap:5px}
+.bar{display:grid;grid-template-columns:1.2em 1fr 3.2em;gap:8px;align-items:center;font-size:.9rem}
+.track{height:10px;background:var(--grid);border-radius:5px;overflow:hidden}
+.fill{height:100%;width:0;background:#a9c4ea;border-radius:5px;transition:width .08s}
+.bar.top .fill{background:var(--blue)}
+.pct{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+h2{font-size:1rem;margin:16px 0 8px}
+#see{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;max-width:180px}
+#see div{aspect-ratio:1/1;background:var(--blue);border-radius:2px;opacity:.06}
+footer{color:var(--muted);font-size:.85rem;margin-top:20px}
+</style>
+</head>
+<body>
+<main>
+<h1>Handwritten Digit Recognizer</h1>
+<p class="sub">Draw a digit from 0 to 9. A small neural network running in your browser guesses it.</p>
+<div class="grid">
+  <div class="card">
+    <canvas id="pad" width="280" height="280" aria-label="Drawing area"></canvas>
+    <div class="row"><span class="hint">Draw with mouse or finger</span><button id="clear" type="button">Clear</button></div>
+  </div>
+  <div class="card">
+    <div class="big"><div id="digit">?</div><div id="msg">Draw something to start</div></div>
+    <div class="bars" id="bars"></div>
+    <h2>What the model sees (8 x 8 pixels)</h2>
+    <div id="see"></div>
+  </div>
+</div>
+<footer>
+  Model: neural network (64-64-10) trained with scikit-learn on distorted digit scans and simulated pen strokes.
+  Accuracy on held-out tests: about __ACC2__% on standard scans and about __ACC__% on strongly distorted simulated pen strokes.
+  It works best with one digit drawn large, in the centre.
+  Everything runs locally in your browser; no drawing is sent anywhere.
+</footer>
+</main>
+<script>
+const MODEL = /*MODEL_JSON*/null;
+
+/* ---------- preprocessing: identical to preprocess.py ---------- */
+function preprocess(ink, W, H) {
+  let m = 0;
+  for (let i = 0; i < ink.length; i++) if (ink[i] > m) m = ink[i];
+  if (m <= 0) return null;
+  const thr = 0.1 * m;
+  let xMin = W, xMax = -1, yMin = H, yMax = -1;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (ink[y * W + x] > thr) { if (x < xMin) xMin = x; if (x > xMax) xMax = x; if (y < yMin) yMin = y; if (y > yMax) yMax = y; }
+  }
+  const w = xMax - xMin + 1, h = yMax - yMin + 1;
+  const side = Math.max(w, h);
+  const s8 = side * 8 / 6;
+  const cx = (xMin + xMax + 1) / 2, cy = (yMin + yMax + 1) / 2;
+  const b = s8 / 8, x0 = cx - s8 / 2, y0 = cy - s8 / 2;
+  const rd = v => Math.floor(v + 0.5);
+  const out = new Float64Array(64);
+  for (let i = 0; i < 8; i++) {
+    const ya = rd(y0 + i * b), yb = Math.max(ya + 1, rd(y0 + (i + 1) * b));
+    for (let j = 0; j < 8; j++) {
+      const xa = rd(x0 + j * b), xb = Math.max(xa + 1, rd(x0 + (j + 1) * b));
+      let sum = 0;
+      for (let y = ya; y < yb; y++) for (let x = xa; x < xb; x++) {
+        if (x >= 0 && x < W && y >= 0 && y < H) sum += ink[y * W + x];
+      }
+      out[i * 8 + j] = sum / ((yb - ya) * (xb - xa));
+    }
+  }
+  let mx = 0;
+  for (let k = 0; k < 64; k++) if (out[k] > mx) mx = out[k];
+  if (mx <= 0) return null;
+  for (let k = 0; k < 64; k++) out[k] = 16 * out[k] / mx;
+  return out;
+}
+
+/* ---------- neural network forward pass ---------- */
+function predict(features) {
+  const x = Array.from(features, v => v / 16);
+  const h = MODEL.b1.map((b, j) => { let s = b; for (let i = 0; i < 64; i++) s += x[i] * MODEL.W1[i][j]; return s > 0 ? s : 0; });
+  const z = MODEL.b2.map((b, k) => { let s = b; for (let j = 0; j < h.length; j++) s += h[j] * MODEL.W2[j][k]; return s; });
+  const mz = Math.max(...z), e = z.map(v => Math.exp(v - mz)), t = e.reduce((a, c) => a + c, 0);
+  return e.map(v => v / t);
+}
+
+/* ---------- UI ---------- */
+const pad = document.getElementById("pad"), ctx = pad.getContext("2d", { willReadFrequently: true });
+const barsEl = document.getElementById("bars"), seeEl = document.getElementById("see");
+const digitEl = document.getElementById("digit"), msgEl = document.getElementById("msg");
+const bars = [], cells = [];
+for (let d = 0; d < 10; d++) {
+  const r = document.createElement("div"); r.className = "bar";
+  r.innerHTML = '<span>' + d + '</span><div class="track"><div class="fill"></div></div><span class="pct">0%</span>';
+  barsEl.appendChild(r); bars.push(r);
+}
+for (let i = 0; i < 64; i++) { const c = document.createElement("div"); seeEl.appendChild(c); cells.push(c); }
+
+function strokeColor() { return getComputedStyle(document.documentElement).getPropertyValue("--stroke").trim() || "#0b0b0b"; }
+ctx.lineWidth = 22; ctx.lineCap = "round"; ctx.lineJoin = "round";
+
+function render(proba, features) {
+  if (!proba) {
+    digitEl.textContent = "?"; msgEl.textContent = "Draw something to start";
+    bars.forEach(b => { b.classList.remove("top"); b.querySelector(".fill").style.width = "0"; b.querySelector(".pct").textContent = "0%"; });
+    cells.forEach(c => c.style.opacity = 0.06); return;
+  }
+  let best = 0; proba.forEach((p, i) => { if (p > proba[best]) best = i; });
+  digitEl.textContent = best;
+  msgEl.textContent = proba[best] < 0.5 ? "Not sure. Try drawing it larger or clearer" : "Confidence " + Math.round(proba[best] * 100) + "%";
+  bars.forEach((b, i) => {
+    b.classList.toggle("top", i === best);
+    b.querySelector(".fill").style.width = (proba[i] * 100).toFixed(1) + "%";
+    b.querySelector(".pct").textContent = Math.round(proba[i] * 100) + "%";
+  });
+  cells.forEach((c, i) => c.style.opacity = (0.06 + 0.94 * features[i] / 16).toFixed(3));
+}
+
+function analyse() {
+  const W = pad.width, H = pad.height, data = ctx.getImageData(0, 0, W, H).data;
+  const ink = new Float32Array(W * H);
+  for (let i = 0; i < ink.length; i++) ink[i] = data[i * 4 + 3] / 255;
+  const f = preprocess(ink, W, H);
+  if (!f) { render(null); return; }
+  render(predict(f), f);
+}
+
+let drawing = false, last = null, queued = false;
+function pos(e) { const r = pad.getBoundingClientRect(); return { x: (e.clientX - r.left) * pad.width / r.width, y: (e.clientY - r.top) * pad.height / r.height }; }
+function schedule() { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; analyse(); }); } }
+pad.addEventListener("pointerdown", e => {
+  drawing = true; last = pos(e); pad.setPointerCapture(e.pointerId);
+  ctx.strokeStyle = strokeColor(); ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(last.x + 0.01, last.y); ctx.stroke(); schedule();
+});
+pad.addEventListener("pointermove", e => {
+  if (!drawing) return; const p = pos(e);
+  ctx.strokeStyle = strokeColor(); ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke(); last = p; schedule();
+});
+["pointerup", "pointercancel"].forEach(t => pad.addEventListener(t, () => { drawing = false; analyse(); }));
+document.getElementById("clear").addEventListener("click", () => { ctx.clearRect(0, 0, pad.width, pad.height); render(null); });
+
+window.__digit = { preprocess, predict, analyse };
+render(null);
+</script>
+</body>
+</html>

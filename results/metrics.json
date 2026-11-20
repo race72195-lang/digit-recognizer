@@ -1,0 +1,16 @@
+[
+  {
+    "model": "Logistic regression",
+    "accuracy_clean_scans": 0.9138888888888889,
+    "accuracy_distorted_scans": 0.9125,
+    "accuracy_pen_strokes": 0.99,
+    "accuracy_pen_strokes_hard": 0.842
+  },
+  {
+    "model": "Neural network (64-64-10)",
+    "accuracy_clean_scans": 0.9777777777777777,
+    "accuracy_distorted_scans": 0.9743055555555555,
+    "accuracy_pen_strokes": 0.9986666666666667,
+    "accuracy_pen_strokes_hard": 0.8913333333333333
+  }
+]
